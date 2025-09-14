@@ -11,6 +11,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
 from sklearn.multioutput import MultiOutputRegressor
+from pca_offset_model import PCAOffsetRegressor
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -107,6 +108,7 @@ models = [
         ('pca', PCA(n_components=50)),
         ('lr', LinearRegression())
     ])),
+    ("PCA + Linear Regression with Offset", PCAOffsetRegressor(n_components=50, offset_value=0.1)),
     # ("Random Forest", RandomForestRegressor(n_estimators=50, random_state=42)),
     # ("Gradient Boosting", MultiOutputRegressor(GradientBoostingRegressor(n_estimators=100, random_state=42))),
     ("Neural Network", MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42))
@@ -173,6 +175,64 @@ def plot_predictions(model, X, y, model_name, num_samples=5, num_wavelengths=100
 
 # Plot predictions for the best model
 plot_predictions(best_model, X_test, y_test, best_name)
+
+# If the best model is the offset model, visualize the offset effect
+if best_name == "PCA + Linear Regression with Offset":
+    # Get the offset model
+    offset_model = best_model
+    
+    # Get base predictions without offset
+    X_pca = offset_model.pca.transform(X_test)
+    base_predictions = offset_model.regressor.predict(X_pca)
+    
+    # Get predictions with offset
+    predictions_with_offset = offset_model.predict(X_test)
+    
+    # Get the offset directions
+    offset_directions = offset_model.offset_classifier.predict(X_pca)
+    
+    # Visualize a few samples with and without offset
+    num_samples = 3
+    num_wavelengths = 100
+    sample_indices = np.random.choice(len(X_test), num_samples, replace=False)
+    
+    # Get MIR wavelengths for visualization
+    mir_wavelengths = []
+    for col in mir_target_cols[:num_wavelengths]:
+        try:
+            parts = col.split('.')
+            if len(parts) >= 2:
+                wavelength = parts[1].split('_')[0]
+                mir_wavelengths.append(float(wavelength))
+            else:
+                mir_wavelengths.append(len(mir_wavelengths))
+        except (IndexError, ValueError):
+            mir_wavelengths.append(len(mir_wavelengths))
+    
+    plt.figure(figsize=(15, 12))
+    for i, idx in enumerate(sample_indices):
+        plt.subplot(num_samples, 1, i+1)
+        plt.plot(mir_wavelengths, y_test[idx][:num_wavelengths], 'b-', label='Actual MIR')
+        plt.plot(mir_wavelengths, base_predictions[idx][:num_wavelengths], 'g-', label='Base Prediction')
+        plt.plot(mir_wavelengths, predictions_with_offset[idx][:num_wavelengths], 'r-', label='Prediction with Offset')
+        
+        offset_direction = "positive" if offset_directions[idx] else "negative"
+        plt.title(f'Sample {i+1} - Offset Direction: {offset_direction} ({offset_model.offset_value if offset_directions[idx] else -offset_model.offset_value})')
+        plt.xlabel('Wavelength')
+        plt.ylabel('Absorbance')
+        plt.legend()
+    
+    plt.tight_layout()
+    plt.suptitle('Effect of Offset on Predictions', y=1.02)
+    plt.savefig('offset_effect_visualization.png')
+    plt.close()
+    
+    # Print information about the offset
+    positive_offsets = np.sum(offset_directions)
+    negative_offsets = len(offset_directions) - positive_offsets
+    print(f"\nOffset Analysis:")
+    print(f"Samples with positive offset (+{offset_model.offset_value}): {positive_offsets} ({positive_offsets/len(offset_directions)*100:.1f}%)")
+    print(f"Samples with negative offset (-{offset_model.offset_value}): {negative_offsets} ({negative_offsets/len(offset_directions)*100:.1f}%)")
 
 # Save the best model
 import joblib
